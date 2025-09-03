@@ -9,7 +9,9 @@ pub fn init(psm: &mut PSM, ppb: &mut PPB, fifo: &mut SioFifo, function: impl FnO
     let mut mc = Multicore::new(psm, ppb, fifo);
     let cores = mc.cores();
     let core1 = &mut cores[1];
+
     core1.spawn(
+        #[allow(static_mut_refs)]
         unsafe {&mut CORE1_STACK.mem},
         function,
     ).ok();

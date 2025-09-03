@@ -3,6 +3,7 @@
 #![no_std]
 #![no_main]
 #![feature(never_type)]
+#![feature(unsafe_cell_access)]
 
 use embedded_alloc::Heap;
 use rp2040_hal::{self as hal, pac, pll::common_configs::PLL_USB_48MHZ, sio::SioFifo, Timer};
@@ -38,6 +39,7 @@ fn main() -> ! {
         use core::mem::MaybeUninit;
         const HEAP_SIZE: usize = 1024;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+        #[allow(static_mut_refs)]
         unsafe { HEAP.init(HEAP_MEM.as_ptr() as usize, HEAP_SIZE) }
     }
 

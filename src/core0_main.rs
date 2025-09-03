@@ -1,4 +1,6 @@
-use defmt::info;
+use core::cell::{OnceCell, UnsafeCell};
+use critical_section::Mutex;
+use defmt::{error, info};
 use embedded_hal::{digital::v2::InputPin, PwmPin};
 use rp2040_hal::{self as hal, gpio::Pins, pac::{self, interrupt}, pwm::{FreeRunning, Pwm0, Slice, Slices}, sio::SioFifo, Timer};
 
@@ -11,34 +13,62 @@ const AUDIO: &[u8] = include_bytes!("sample.wav");
 
 /* SHARED WITH INTERRUPT */
 
-/// The hardware PWM driver that is shared with the interrupt routine.
-static mut PWM: Option<hal::pwm::Slice<Pwm0, FreeRunning>> = None;
+// The hardware PWM driver that is shared with the interrupt routine.
+static PWM: Mutex<UnsafeCell<OnceCell<hal::pwm::Slice<Pwm0, FreeRunning>>>> = Mutex::new(UnsafeCell::new(OnceCell::new()));
 
-#[interrupt]
-fn PWM_IRQ_WRAP() {
-    // SAFETY: This is not used outside of interrupt critical sections in the main thread.
-    let pwm = unsafe { PWM.as_mut() }.unwrap();
+/// Safely accesses global PWM variable.
+/// WARNING: Uses critical section.
+fn access_pwm<T: Fn(&mut hal::pwm::Slice<Pwm0, FreeRunning>) -> ()> (function: T) -> () {
+    critical_section::with(|cs| {
+        let pwm_cell = PWM.borrow(cs);
+        let pwm = unsafe {pwm_cell.as_mut_unchecked()}.get_mut().unwrap();
 
-    // Clear the interrupt (so we don't immediately re-enter this routine)
-    pwm.clear_interrupt();
+        function(pwm);
+    });
+}
+
+/// Safely set global PWM variable.
+/// WARNING: Only call this *once*, else forced panic.
+fn set_pwm(pwm: hal::pwm::Slice<Pwm0, FreeRunning>) -> () {
+    critical_section::with(|cs| {
+        let pwm_cell = PWM.borrow(cs);
+        let result = unsafe {pwm_cell.as_mut_unchecked()}.set(pwm);
+        if result.is_err() {
+            error!("Shared PWM Mutex failed to set!");
+        };
+    });
 }
 
 
+#[interrupt]
+fn PWM_IRQ_WRAP() {
+    access_pwm(|pwm| {
+        // Clear the interrupt so we don't immediately re-enter this routine
+        pwm.clear_interrupt();
+    });
+}
+
+
+
 pub fn main(pins: Pins, timer: Timer, pwm_slices: Slices, inter_core_fifo: &mut SioFifo) -> ! {
-    let mut pwm: Slice<Pwm0, FreeRunning> = pwm_slices.pwm0;
-
     let mut wav_player = WAVPlayer::new(AUDIO);
-    wav_player.init(&mut pwm);
+    
+    {
+        // Get our audio PWM peripheral
+        let mut pwm: Slice<Pwm0, FreeRunning> = pwm_slices.pwm0;
 
-    // Output channel A on PWM0 to GPIO16
-    pwm.channel_a.output_to(pins.gpio16);
-
-    unsafe {
-        // Share the PWM with our interrupt routine.
-        PWM = Some(pwm);
+        // Let the player configure it
+        wav_player.init(&mut pwm);
+        
+        // Set its output channel
+        pwm.channel_a.output_to(pins.gpio16);
+        
+        // Give it away to our shared Mutex for it,
+        // so the interrupt handler can access it as well
+        set_pwm(pwm);
 
         // Unmask the PWM_IRQ_WRAP interrupt so we start receiving events.
-        pac::NVIC::unmask(pac::Interrupt::PWM_IRQ_WRAP);
+        unsafe {pac::NVIC::unmask(pac::Interrupt::PWM_IRQ_WRAP)};
     }
 
 
@@ -52,10 +82,8 @@ pub fn main(pins: Pins, timer: Timer, pwm_slices: Slices, inter_core_fifo: &mut 
         let val = wav_player.get_next_sample();
         let i = wav_player.get_current_sample();
 
-        cortex_m::interrupt::free(|_| {
-            // SAFETY: Interrupt cannot currently use this while we're in a critical section.
-            let channel = &mut unsafe { PWM.as_mut() }.unwrap().channel_a;
-            channel.set_duty(val);
+        access_pwm(|pwm| {
+            pwm.channel_a.set_duty(val);
         });
 
         if inter_core_fifo.is_write_ready() {
