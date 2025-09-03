@@ -1,0 +1,9 @@
+{
+    "rust-analyzer.check.allTargets": false,
+    "cSpell.words": [
+        "defmt",
+        "multicore",
+        "NVIC",
+        "uninit"
+    ],
+}
