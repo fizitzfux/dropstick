@@ -12,4 +12,4 @@ rustflags = [
 target = "thumbv6m-none-eabi"
 
 [env]
-DEFMT_LOG = "trace"
+DEFMT_LOG = "debug,embedded_sdmmc=warn"
