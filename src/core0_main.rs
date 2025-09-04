@@ -1,14 +1,11 @@
 use core::cell::{OnceCell, UnsafeCell};
+use cortex_m::prelude::_embedded_hal_PwmPin;
 use critical_section::Mutex;
-use defmt::{error, info};
-use embedded_hal::{digital::v2::InputPin, PwmPin};
-use rp2040_hal::{self as hal, gpio::Pins, pac::{self, interrupt}, pwm::{FreeRunning, Pwm0, Slice, Slices}, sio::SioFifo, Timer};
+use defmt::{error, info, trace};
+use embedded_hal::{digital::InputPin};
+use rp2040_hal::{self as hal, gpio::{bank0::{Gpio16, Gpio6}, FunctionNull, Pin, PullDown}, pac::{self, interrupt}, pwm::{FreeRunning, Pwm0, Slice, Slices}, sio::SioFifo, Timer};
 
-use crate::player::wav::WAVPlayer;
-
-/// The audio file to play.
-/// Format: WAV 8-bit unsigned mono 8_000 Hz
-const AUDIO: &[u8] = include_bytes!("sample.wav");
+use crate::player::wav_streaming::WAVStreamPlayer;
 
 
 /* SHARED WITH INTERRUPT */
@@ -50,8 +47,12 @@ fn PWM_IRQ_WRAP() {
 
 
 
-pub fn main(pins: Pins, timer: Timer, pwm_slices: Slices, inter_core_fifo: &mut SioFifo) -> ! {
-    let mut wav_player = WAVPlayer::new(AUDIO);
+pub fn main(gpio6: Pin<Gpio6, FunctionNull, PullDown>, gpio16: Pin<Gpio16, FunctionNull, PullDown>, timer: Timer, pwm_slices: Slices, inter_core_fifo: &mut SioFifo) -> ! {
+    info!("Core 0 says hiii! X3");
+
+    // Set up wav player
+    let mut buf = [0; 128];
+    let mut wav_player = WAVStreamPlayer::new(&mut buf);
     
     {
         // Get our audio PWM peripheral
@@ -61,7 +62,7 @@ pub fn main(pins: Pins, timer: Timer, pwm_slices: Slices, inter_core_fifo: &mut 
         wav_player.init(&mut pwm);
         
         // Set its output channel
-        pwm.channel_a.output_to(pins.gpio16);
+        pwm.channel_a.output_to(gpio16);
         
         // Give it away to our shared Mutex for it,
         // so the interrupt handler can access it as well
@@ -72,43 +73,57 @@ pub fn main(pins: Pins, timer: Timer, pwm_slices: Slices, inter_core_fifo: &mut 
     }
 
 
-    let button_pin = pins.gpio2.into_pull_up_input();
+    // Pause button state
+    let mut button_pin = gpio6.into_pull_up_input();
     let mut button_already_down: bool = button_pin.is_low().ok().expect("huh?? :0");
 
-
+    // Player state
+    let mut paused: bool = false;
     let mut start_time: u64 = timer.get_counter().ticks();
-    const EXPECTED: u64 = 1_000_000 / (2_u64.pow(15));
+
+    // Playback loop
     loop {
-        let val = wav_player.get_next_sample();
-        let i = wav_player.get_current_sample();
-
-        access_pwm(|pwm| {
-            pwm.channel_a.set_duty(val);
-        });
-
-        if inter_core_fifo.is_write_ready() {
-            inter_core_fifo.write(0);
-        }
-
-        if (i & 0b1111_1111) == 255 {
-            let current_time = timer.get_counter().ticks();
-            info!("DURATION: {}us MAX: {}us", current_time - start_time, EXPECTED);
-        }
-
-        wav_player.await_next_tick();
-
-        if (i & 0b1111_1111) == 254 {
-            start_time = timer.get_counter().ticks();
-        }
-
+        // Pause button
         if button_pin.is_low().is_ok_and(|val| val == true) {
             if !button_already_down {
                 button_already_down = true;
-                wav_player.reset();
+                paused = !paused;
             }
         }
         else {
             button_already_down = false;
         }
+
+        // Do not play if we are paused
+        if paused {continue;}
+
+        // Get sample
+        let val = wav_player.get_next_sample();
+
+        // Play sample
+        access_pwm(|pwm| {
+            pwm.channel_a.set_duty(val);
+        });
+
+        // Get more samples if we're out
+        if wav_player.counter >= wav_player.current_buffer.len() -1 {
+            // Read from inter-core fifo
+            for i in 0..wav_player.current_buffer.len() {
+                wav_player.current_buffer[i] = inter_core_fifo.read_blocking() as u8;
+            };
+            wav_player.counter = 0;
+
+            // Log time it took to play last buffer for performance debugging
+            let new_start_time = timer.get_counter().ticks();
+            let current_time = timer.get_counter().ticks();
+            trace!("Stream frame took: {}us goal: {}us", current_time - start_time, 31.25*wav_player.current_buffer.len() as f32);
+            start_time = new_start_time;
+        }
+        // Else wait till we need to supply next sample
+        else {
+            wav_player.await_next_tick();
+        }
+
+        // Loop, so we play next sample
     }
 }
