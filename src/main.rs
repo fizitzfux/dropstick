@@ -5,6 +5,8 @@
 #![feature(never_type)]
 #![feature(unsafe_cell_access)]
 
+extern crate alloc;
+
 use embedded_alloc::Heap;
 use rp2040_hal::{self as hal, pac, pll::common_configs::PLL_USB_48MHZ, Timer};
 
@@ -86,6 +88,8 @@ fn main() -> ! {
             pins.gpio4,
             pins.gpio5,
             timer,
+            pins.gpio7,
+            pins.gpio8,
         )
     });
 
