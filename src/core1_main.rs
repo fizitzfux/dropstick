@@ -194,14 +194,14 @@ pub fn main(
     let name = str::from_utf8(volume_name.name()).expect("Failed!");
     trace!("Card name is \"{}\"", name);
     
-        //Button Interrupt Setup
-        let gpio7 = gpio7.into_pull_up_input();
-        let gpio8 = gpio8.into_pull_up_input();
-        gpio7.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
-        gpio8.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
-        set_button_states(ButtonStates::default());
-        set_input_pins(InputPins { btn_1: gpio7, btn_2: gpio8 });
-        unsafe {pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0)};
+    //Button Interrupt Setup
+    let gpio7 = gpio7.into_pull_up_input();
+    let gpio8 = gpio8.into_pull_up_input();
+    gpio7.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
+    gpio8.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
+    set_button_states(ButtonStates::default());
+    set_input_pins(InputPins { btn_1: gpio7, btn_2: gpio8 });
+    unsafe {pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0)};
 
     // After we have the volume (partition) of the drive we got to open the
     // root directory:
