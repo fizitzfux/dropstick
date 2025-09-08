@@ -1,8 +1,12 @@
-use defmt::{debug, info, trace};
+use core::cell::{OnceCell, UnsafeCell};
+
+use critical_section::Mutex;
+use defmt::{debug, error, info, trace};
+use embedded_hal::digital::InputPin;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
 use fugit::RateExtU32;
-use rp2040_hal::{clocks::ClocksManager, gpio::{self, bank0::{Gpio2, Gpio3, Gpio4, Gpio5}}, multicore::{Multicore, Stack}, pac::{self, PPB, PSM, RESETS, SPI0}, sio::SioFifo, spi, Clock, Sio, Timer};
+use rp2040_hal::{clocks::ClocksManager, gpio::{self, bank0::{Gpio2, Gpio3, Gpio4, Gpio5, Gpio7, Gpio8}, FunctionSio, PullUp, SioInput}, multicore::{Multicore, Stack}, pac::{self, interrupt, PPB, PSM, RESETS, SPI0}, sio::SioFifo, spi, Clock, Sio, Timer};
 
 /// Allocate stack for the second core
 static mut CORE1_STACK: Stack<4096> = Stack::new();
@@ -26,6 +30,90 @@ impl TimeSource for DummyTimesource {
             seconds: 0,
         }
     }
+}
+
+/* SHARED WITH INTERRUPT */
+
+struct InputPins {
+    btn_1: gpio::Pin<Gpio7, FunctionSio<SioInput>, PullUp>,
+    btn_2: gpio::Pin<Gpio8, FunctionSio<SioInput>, PullUp>,
+}
+#[derive(Default)]
+struct ButtonStates {
+    btn_1_pressed: bool,
+    btn_2_pressed: bool,
+}
+
+// The INPUT_PINS that are shared with the interrupt routine.
+static INPUT_PINS: Mutex<UnsafeCell<OnceCell<InputPins>>> = Mutex::new(UnsafeCell::new(OnceCell::new()));
+
+/// Safely accesses global INPUT_PINS variable.
+/// WARNING: Uses critical section.
+fn access_input_pins<T: Fn(&mut InputPins, &mut ButtonStates) -> ()> (function: T) -> () {
+    critical_section::with(|cs| {
+        let input_pins_cell = INPUT_PINS.borrow(cs);
+        let input_pins = unsafe {input_pins_cell.as_mut_unchecked()}.get_mut().unwrap();
+
+        let button_states_cell = BUTTON_STATES.borrow(cs);
+        let button_states = unsafe {button_states_cell.as_mut_unchecked()}.get_mut().unwrap();
+
+        function(input_pins, button_states);
+    });
+}
+
+/// Safely set global INPUT_PINS variable.
+/// WARNING: Only call this *once*, else forced panic.
+fn set_input_pins(input_pins: InputPins) -> () {
+    critical_section::with(|cs| {
+        let input_pins_cell = INPUT_PINS.borrow(cs);
+        let result = unsafe {input_pins_cell.as_mut_unchecked()}.set(input_pins);
+        if result.is_err() {
+            error!("Shared INPUT_PINS Mutex failed to set!");
+        };
+    });
+}
+
+// The INPUT_PINS that are shared with the interrupt routine.
+static BUTTON_STATES: Mutex<UnsafeCell<OnceCell<ButtonStates>>> = Mutex::new(UnsafeCell::new(OnceCell::new()));
+
+/// Safely accesses global INPUT_PINS variable.
+/// WARNING: Uses critical section.
+fn access_button_states<T: Fn(&mut ButtonStates) -> ()> (function: T) -> () {
+    critical_section::with(|cs| {
+        let button_states_cell = BUTTON_STATES.borrow(cs);
+        let button_states = unsafe {button_states_cell.as_mut_unchecked()}.get_mut().unwrap();
+
+        function(button_states);
+    });
+}
+
+/// Safely set global INPUT_PINS variable.
+/// WARNING: Only call this *once*, else forced panic.
+fn set_button_states(button_states: ButtonStates) -> () {
+    critical_section::with(|cs| {
+        let button_states_cell = BUTTON_STATES.borrow(cs);
+        let result = unsafe {button_states_cell.as_mut_unchecked()}.set(button_states);
+        if result.is_err() {
+            error!("Shared INPUT_PINS Mutex failed to set!");
+        };
+    });
+}
+
+#[interrupt]
+fn IO_IRQ_BANK0() {
+    
+    access_input_pins(|pins, states| {
+        
+        if pins.btn_1.is_low().ok().unwrap() {
+            states.btn_1_pressed = true;
+        }
+        if pins.btn_2.is_low().ok().unwrap() {
+            states.btn_2_pressed = true;
+        }
+        
+        pins.btn_1.clear_interrupt(gpio::Interrupt::EdgeLow);
+        pins.btn_2.clear_interrupt(gpio::Interrupt::EdgeLow);
+    });
 }
 
 
@@ -52,6 +140,8 @@ pub fn main(
     gpio4: gpio::Pin<Gpio4, gpio::FunctionNull, gpio::PullDown>,
     gpio5: gpio::Pin<Gpio5, gpio::FunctionNull, gpio::PullDown>,
     timer: Timer,
+    gpio7: gpio::Pin<Gpio7, gpio::FunctionNull, gpio::PullDown>,
+    gpio8: gpio::Pin<Gpio8, gpio::FunctionNull, gpio::PullDown>,
 ) -> ! {
     info!("Core 1 says hello! :3c");
 
@@ -103,6 +193,15 @@ pub fn main(
     let volume_name = volume_mgr.get_root_volume_label(volume).expect("Failed!").expect("Failed!");
     let name = str::from_utf8(volume_name.name()).expect("Failed!");
     trace!("Card name is \"{}\"", name);
+    
+    //Button Interrupt Setup
+    let gpio7 = gpio7.into_pull_up_input();
+    let gpio8 = gpio8.into_pull_up_input();
+    gpio7.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
+    gpio8.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
+    set_button_states(ButtonStates::default());
+    set_input_pins(InputPins { btn_1: gpio7, btn_2: gpio8 });
+    unsafe {pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0)};
 
     // After we have the volume (partition) of the drive we got to open the
     // root directory:
@@ -133,6 +232,18 @@ pub fn main(
             if amount_read < buffer.len() {
                 break;
             }
+
+            access_button_states(|states| {
+                if states.btn_1_pressed {
+                    info!("Button 1 pressed!");
+                    states.btn_1_pressed = false;
+                }
+                if states.btn_2_pressed {
+                    info!("Button 2 pressed!");
+                    states.btn_2_pressed = false;
+                }
+            });
+
         }
 
         volume_mgr.close_file(file).unwrap();
