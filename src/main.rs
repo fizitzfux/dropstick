@@ -13,7 +13,7 @@ use rp2040_hal::{self as hal, pac, pll::common_configs::PLL_USB_48MHZ, Timer};
 mod player;
 mod clock_init;
 mod core0_main;
-mod core1_main;
+mod core1;
 
 // Formatting machinery
 use defmt_rtt as _;
@@ -78,8 +78,8 @@ fn main() -> ! {
     // Init PWMs
     let pwm_slices = hal::pwm::Slices::new(pac.PWM, &mut pac.RESETS);
 
-    core1_main::init(&mut pac.PSM, &mut pac.PPB, &mut sio.fifo, move || {
-        core1_main::main(
+    core1::init(&mut pac.PSM, &mut pac.PPB, &mut sio.fifo, move || {
+        core1::main(
             &mut pac.RESETS,
             pac.SPI0,
             clocks,
@@ -90,6 +90,7 @@ fn main() -> ! {
             timer,
             pins.gpio7,
             pins.gpio8,
+            pins.gpio9,
         )
     });
 

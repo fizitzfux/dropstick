@@ -1,12 +1,17 @@
 use core::cell::{OnceCell, UnsafeCell};
 
+use alloc::boxed::Box;
 use critical_section::Mutex;
 use defmt::{debug, error, info, trace};
 use embedded_hal::digital::InputPin;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
 use fugit::RateExtU32;
-use rp2040_hal::{clocks::ClocksManager, gpio::{self, bank0::{Gpio2, Gpio3, Gpio4, Gpio5, Gpio7, Gpio8}, FunctionSio, PullUp, SioInput}, multicore::{Multicore, Stack}, pac::{self, interrupt, PPB, PSM, RESETS, SPI0}, sio::SioFifo, spi, Clock, Sio, Timer};
+use rp2040_hal::{clocks::ClocksManager, gpio::{self, bank0::{Gpio2, Gpio3, Gpio4, Gpio5, Gpio7, Gpio8, Gpio9}, FunctionSio, PullUp, SioInput}, multicore::{Multicore, Stack}, pac::{self, interrupt, PPB, PSM, RESETS, SPI0}, sio::SioFifo, spi, Clock, Sio, Timer};
+
+use crate::core1::ui::{menu::{main_menu::MainMenu, Menu}, UI};
+
+pub mod ui;
 
 /// Allocate stack for the second core
 static mut CORE1_STACK: Stack<4096> = Stack::new();
@@ -37,11 +42,13 @@ impl TimeSource for DummyTimesource {
 struct InputPins {
     btn_1: gpio::Pin<Gpio7, FunctionSio<SioInput>, PullUp>,
     btn_2: gpio::Pin<Gpio8, FunctionSio<SioInput>, PullUp>,
+    btn_3: gpio::Pin<Gpio9, FunctionSio<SioInput>, PullUp>,
 }
-#[derive(Default)]
-struct ButtonStates {
+#[derive(Default, Clone, Copy)]
+pub struct ButtonStates {
     btn_1_pressed: bool,
     btn_2_pressed: bool,
+    btn_3_pressed: bool,
 }
 
 // The INPUT_PINS that are shared with the interrupt routine.
@@ -78,7 +85,7 @@ static BUTTON_STATES: Mutex<UnsafeCell<OnceCell<ButtonStates>>> = Mutex::new(Uns
 
 /// Safely accesses global INPUT_PINS variable.
 /// WARNING: Uses critical section.
-fn access_button_states<T: Fn(&mut ButtonStates) -> ()> (function: T) -> () {
+fn access_button_states<T: FnMut(&mut ButtonStates) -> ()> (mut function: T) -> () {
     critical_section::with(|cs| {
         let button_states_cell = BUTTON_STATES.borrow(cs);
         let button_states = unsafe {button_states_cell.as_mut_unchecked()}.get_mut().unwrap();
@@ -110,9 +117,13 @@ fn IO_IRQ_BANK0() {
         if pins.btn_2.is_low().ok().unwrap() {
             states.btn_2_pressed = true;
         }
+        if pins.btn_3.is_low().ok().unwrap() {
+            states.btn_3_pressed = true;
+        }
         
         pins.btn_1.clear_interrupt(gpio::Interrupt::EdgeLow);
         pins.btn_2.clear_interrupt(gpio::Interrupt::EdgeLow);
+        pins.btn_3.clear_interrupt(gpio::Interrupt::EdgeLow);
     });
 }
 
@@ -142,6 +153,7 @@ pub fn main(
     timer: Timer,
     gpio7: gpio::Pin<Gpio7, gpio::FunctionNull, gpio::PullDown>,
     gpio8: gpio::Pin<Gpio8, gpio::FunctionNull, gpio::PullDown>,
+    gpio9: gpio::Pin<Gpio9, gpio::FunctionNull, gpio::PullDown>,
 ) -> ! {
     info!("Core 1 says hello! :3c");
 
@@ -192,15 +204,20 @@ pub fn main(
 
     let volume_name = volume_mgr.get_root_volume_label(volume).expect("Failed!").expect("Failed!");
     let name = str::from_utf8(volume_name.name()).expect("Failed!");
-    trace!("Card name is \"{}\"", name);
+    trace!("Card name is '{}'", name);
+
+    //Menu Setup
+    let mut ui = UI::new(Box::new(MainMenu::new()));
     
     //Button Interrupt Setup
     let gpio7 = gpio7.into_pull_up_input();
     let gpio8 = gpio8.into_pull_up_input();
+    let gpio9 = gpio9.into_pull_up_input();
     gpio7.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
     gpio8.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
+    gpio9.set_interrupt_enabled(gpio::Interrupt::EdgeLow, true);
     set_button_states(ButtonStates::default());
-    set_input_pins(InputPins { btn_1: gpio7, btn_2: gpio8 });
+    set_input_pins(InputPins { btn_1: gpio7, btn_2: gpio8, btn_3: gpio9 });
     unsafe {pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0)};
 
     // After we have the volume (partition) of the drive we got to open the
@@ -218,7 +235,7 @@ pub fn main(
     }).unwrap();
 
     // Next we going to read a file from the SD card:
-    if let Ok(file) = volume_mgr.open_file_in_dir(dir, "Daisies.wav", Mode::ReadOnly) {
+    if let Ok(file) = volume_mgr.open_file_in_dir(dir, "ASTROP~1.WAV", Mode::ReadOnly) {
         let mut read_bytes: usize = 0;
         loop {
             let mut buffer = [0u8; 128];
@@ -233,17 +250,15 @@ pub fn main(
                 break;
             }
 
+            let mut states_clone: Option<ButtonStates> = None;
+            //Button input checks
             access_button_states(|states| {
-                if states.btn_1_pressed {
-                    info!("Button 1 pressed!");
-                    states.btn_1_pressed = false;
-                }
-                if states.btn_2_pressed {
-                    info!("Button 2 pressed!");
-                    states.btn_2_pressed = false;
-                }
+                states_clone = Some(states.clone());
+                states.btn_1_pressed = false;
+                states.btn_2_pressed = false;
+                states.btn_3_pressed = false;
             });
-
+            ui.check_button_input(states_clone.unwrap());
         }
 
         volume_mgr.close_file(file).unwrap();
