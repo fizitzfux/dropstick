@@ -4,6 +4,7 @@ use defmt::{error, trace};
 use crate::core1::{ui::menu::Menu, ButtonStates};
 
 pub mod menu;
+pub mod screen;
 
 pub struct UI {
     menu_stack: [Option<Box<dyn Menu>>; 8],

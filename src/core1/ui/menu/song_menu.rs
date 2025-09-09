@@ -45,4 +45,20 @@ impl Menu for SongMenu {
     fn get_menu_name(&self) -> &str {
         "Song Menu"
     }
+
+    fn get_item(&self, index: u8) -> &str {
+        match index {
+            0 => "Back",
+            1 => "Play Song 1",
+            2 => "Play Song 2",
+            3 => "Play Song 3",
+            4 => "Play Song 4",
+            5 => "Play Song 5",
+            _ => "",
+        }
+    }
+    
+    fn get_selection_pointer(&self) -> u8 {
+        self.selection
+    }
 }
