@@ -44,4 +44,16 @@ impl Menu for SettingsMenu {
     fn get_menu_name(&self) -> &str {
         "Settings"
     }
+
+    fn get_item(&self, index: u8) -> &str {
+        match index {
+            0 => "Back",
+            1 => "Change Settings",
+            _ => "",
+        }
+    }
+
+    fn get_selection_pointer(&self) -> u8 {
+        self.selection
+    }
 }

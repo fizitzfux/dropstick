@@ -7,9 +7,9 @@ use embedded_hal::digital::InputPin;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use embedded_sdmmc::{Mode, SdCard, TimeSource, Timestamp, VolumeIdx, VolumeManager};
 use fugit::RateExtU32;
-use rp2040_hal::{clocks::ClocksManager, gpio::{self, bank0::{Gpio2, Gpio3, Gpio4, Gpio5, Gpio7, Gpio8, Gpio9}, FunctionSio, PullUp, SioInput}, multicore::{Multicore, Stack}, pac::{self, interrupt, PPB, PSM, RESETS, SPI0}, sio::SioFifo, spi, Clock, Sio, Timer};
-
-use crate::core1::ui::{menu::{main_menu::MainMenu, Menu}, UI};
+use rp2040_hal::{clocks::ClocksManager, gpio::{self, bank0::{Gpio18, Gpio19, Gpio2, Gpio3, Gpio4, Gpio5, Gpio7, Gpio8, Gpio9}, FunctionSio, PullUp, SioInput}, multicore::{Multicore, Stack}, pac::{self, interrupt, I2C1, PPB, PSM, RESETS, SPI0}, sio::SioFifo, spi, Clock, Sio, Timer, I2C};
+use ssd1306::I2CDisplayInterface;
+use crate::core1::ui::{menu::main_menu::MainMenu, screen::Screen, UI};
 
 pub mod ui;
 
@@ -49,6 +49,12 @@ pub struct ButtonStates {
     btn_1_pressed: bool,
     btn_2_pressed: bool,
     btn_3_pressed: bool,
+}
+
+impl ButtonStates {
+    pub fn is_any_btn_pressed(&self) -> bool {
+        self.btn_1_pressed || self.btn_2_pressed || self.btn_3_pressed
+    }
 }
 
 // The INPUT_PINS that are shared with the interrupt routine.
@@ -108,7 +114,6 @@ fn set_button_states(button_states: ButtonStates) -> () {
 
 #[interrupt]
 fn IO_IRQ_BANK0() {
-    
     access_input_pins(|pins, states| {
         
         if pins.btn_1.is_low().ok().unwrap() {
@@ -154,6 +159,9 @@ pub fn main(
     gpio7: gpio::Pin<Gpio7, gpio::FunctionNull, gpio::PullDown>,
     gpio8: gpio::Pin<Gpio8, gpio::FunctionNull, gpio::PullDown>,
     gpio9: gpio::Pin<Gpio9, gpio::FunctionNull, gpio::PullDown>,
+    i2c1: I2C1,
+    gpio18: gpio::Pin<Gpio18, gpio::FunctionNull, gpio::PullDown>,
+    gpio19: gpio::Pin<Gpio19, gpio::FunctionNull, gpio::PullDown>,
 ) -> ! {
     info!("Core 1 says hello! :3c");
 
@@ -219,6 +227,22 @@ pub fn main(
     set_button_states(ButtonStates::default());
     set_input_pins(InputPins { btn_1: gpio7, btn_2: gpio8, btn_3: gpio9 });
     unsafe {pac::NVIC::unmask(pac::Interrupt::IO_IRQ_BANK0)};
+    let mut last_input: u64 = 0;
+
+    //Screen Setup
+    let i2c = I2C::i2c1(
+        i2c1,
+        gpio18.reconfigure(), // sda
+        gpio19.reconfigure(), // scl
+        400.kHz(),
+        resets,
+        clocks.system_clock.freq(),
+    );
+    let interface = I2CDisplayInterface::new(i2c);
+
+    let mut screen = Screen::new(interface);
+    screen.draw_from_ui(&ui);
+
 
     // After we have the volume (partition) of the drive we got to open the
     // root directory:
@@ -258,7 +282,15 @@ pub fn main(
                 states.btn_2_pressed = false;
                 states.btn_3_pressed = false;
             });
-            ui.check_button_input(states_clone.unwrap());
+            
+            if states_clone.unwrap().is_any_btn_pressed() {
+                let time_between = timer.get_counter().ticks() - last_input;
+                if time_between > 250_000 {
+                    ui.check_button_input(states_clone.unwrap());
+                    screen.draw_from_ui(&ui);
+                    last_input = timer.get_counter().ticks();
+                }
+            }
         }
 
         volume_mgr.close_file(file).unwrap();

@@ -41,4 +41,16 @@ impl Menu for MainMenu {
     fn get_menu_name(&self) -> &str {
         "Main Menu"
     }
+    
+    fn get_item(&self, index: u8) -> &str {
+        match index {
+            0 => "Songs",
+            1 => "Settings",
+            _ => "",
+        }
+    }
+
+    fn get_selection_pointer(&self) -> u8 {
+        self.selection
+    }
 }

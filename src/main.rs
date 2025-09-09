@@ -91,6 +91,9 @@ fn main() -> ! {
             pins.gpio7,
             pins.gpio8,
             pins.gpio9,
+            pac.I2C1,
+            pins.gpio18,
+            pins.gpio19,
         )
     });
 
