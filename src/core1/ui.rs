@@ -66,8 +66,3 @@ impl UI {
     }
 }
 
-#[derive(Default)]
-pub struct MenuReturn {
-    push: Option<Box<dyn Menu>>,
-    pop: bool,
-}

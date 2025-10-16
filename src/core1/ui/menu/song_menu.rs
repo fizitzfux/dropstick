@@ -1,6 +1,6 @@
 use defmt::info;
 
-use crate::core1::ui::{menu::Menu, MenuReturn};
+use crate::core1::ui::menu::{Menu, MenuReturn};
 
 
 pub struct SongMenu {
@@ -24,7 +24,7 @@ impl Menu for SongMenu {
     }
 
     fn forward(&mut self) {
-        if self.selection == self.max_selection {
+        if self.selection >= self.max_selection {
             self.selection = 0;
         }else {
             self.selection += 1;

@@ -1,4 +1,4 @@
-use crate::core1::ui::MenuReturn;
+use alloc::boxed::Box;
 
 pub mod main_menu;
 pub mod song_menu;
@@ -12,4 +12,10 @@ pub trait Menu {
     fn get_menu_name(&self) -> &str;
     fn get_item(&self, index: u8) -> &str;
     fn get_selection_pointer(&self) -> u8;
+}
+
+#[derive(Default)]
+pub struct MenuReturn {
+    pub push: Option<Box<dyn Menu>>,
+    pub pop: bool,
 }
