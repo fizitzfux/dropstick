@@ -259,7 +259,7 @@ pub fn main(
     }).unwrap();
 
     // Next we going to read a file from the SD card:
-    if let Ok(file) = volume_mgr.open_file_in_dir(dir, "ASTROP~1.WAV", Mode::ReadOnly) {
+    if let Ok(file) = volume_mgr.open_file_in_dir(dir, "Daisies.wav", Mode::ReadOnly) {
         let mut read_bytes: usize = 0;
         loop {
             let mut buffer = [0u8; 128];

@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 
-use crate::core1::ui::{menu::{settings_menu::SettingsMenu, song_menu::SongMenu, Menu}, MenuReturn};
+use crate::core1::ui::menu::{settings_menu::SettingsMenu, song_menu::SongMenu, Menu, MenuReturn};
 
 pub struct MainMenu {
     selection: u8,
@@ -23,7 +23,7 @@ impl Menu for MainMenu {
     }
 
     fn forward(&mut self) {
-        if self.selection == self.max_selection {
+        if self.selection >= self.max_selection {
             self.selection = 0;
         }else {
             self.selection += 1;

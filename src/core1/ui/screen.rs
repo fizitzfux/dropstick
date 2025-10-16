@@ -17,7 +17,7 @@ impl<DI> Screen<DI>
     pub fn new(interface: DI) -> Screen<DI> {
         let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate0)
         .into_buffered_graphics_mode();
-        display.init().unwrap();
+        display.init().expect("Failed to initialize display");
 
         Screen { 
             display,
@@ -46,7 +46,7 @@ impl<DI> Screen<DI>
         big_font_style,
         Alignment::Center,
         )
-        .draw(&mut self.display).unwrap();
+        .draw(&mut self.display).expect("Failed to draw to display");
         
         //Top
         Text::with_alignment(
@@ -55,7 +55,7 @@ impl<DI> Screen<DI>
         small_font_style,
         Alignment::Left,
         )
-        .draw(&mut self.display).unwrap();
+        .draw(&mut self.display).expect("Failed to draw to display");
 
         //Center
         Text::with_alignment(
@@ -64,7 +64,7 @@ impl<DI> Screen<DI>
         big_font_style,
         Alignment::Left,
         )
-        .draw(&mut self.display).unwrap();
+        .draw(&mut self.display).expect("Failed to draw to display");
 
         //Bottom
         Text::with_alignment(
@@ -73,9 +73,9 @@ impl<DI> Screen<DI>
         small_font_style,
         Alignment::Left,
         )
-        .draw(&mut self.display).unwrap();
+        .draw(&mut self.display).expect("Failed to draw to display");
 
-        self.display.flush().unwrap();
+        self.display.flush().expect("Failed to flush display");
     }
 
 }
